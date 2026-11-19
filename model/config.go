@@ -1,6 +1,9 @@
+// Modified by Trifenn: read, validate and preserve the local traffic policy.
 package model
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -16,11 +19,14 @@ import (
 	"github.com/knadh/koanf/providers/file"
 	"github.com/knadh/koanf/v2"
 	"sigs.k8s.io/yaml"
+
+	"github.com/nezhahq/agent/pkg/traffic"
 )
 
 //go:generate go run gen/gen.go -type=AgentConfig
 type AgentConfig struct {
-	Debug bool `koanf:"debug" json:"debug"`
+	Debug   bool            `koanf:"debug" json:"debug"`
+	Traffic *traffic.Config `koanf:"-" json:"traffic,omitempty"`
 
 	Server       string `koanf:"server" json:"server"`               // 服务器地址
 	ClientSecret string `koanf:"client_secret" json:"client_secret"` // 客户端密钥
@@ -54,6 +60,7 @@ type AgentConfig struct {
 
 func (c AgentConfig) Clone() AgentConfig {
 	cloned := c
+	cloned.Traffic = c.Traffic.Clone()
 	cloned.HardDrivePartitionAllowlist = slices.Clone(c.HardDrivePartitionAllowlist)
 	cloned.NICAllowlist = maps.Clone(c.NICAllowlist)
 	cloned.DNS = slices.Clone(c.DNS)
@@ -65,10 +72,12 @@ func (c AgentConfig) Clone() AgentConfig {
 func (c *AgentConfig) Read(path string) error {
 	c.k = koanf.New("")
 	c.filePath = path
+	c.Traffic = nil
+	parser := new(kubeyaml)
 	saveOnce := sync.OnceValue(c.Save)
 
 	if _, err := os.Stat(path); err == nil {
-		err = c.k.Load(file.Provider(path), new(kubeyaml))
+		err = c.k.Load(file.Provider(path), parser)
 		if err != nil {
 			return err
 		}
@@ -87,20 +96,30 @@ func (c *AgentConfig) Read(path string) error {
 	if err != nil {
 		return err
 	}
+	c.Traffic = parser.traffic
 
 	if c.UUID == "" {
-		if uuid, err := uuid.GenerateUUID(); err == nil {
-			c.UUID = uuid
-			defer saveOnce()
-		} else {
+		id, err := uuid.GenerateUUID()
+		if err != nil {
 			return fmt.Errorf("generate UUID failed: %v", err)
 		}
+		c.UUID = id
+		if c.Traffic != nil {
+			if err := ValidateConfig(c, false); err != nil {
+				return err
+			}
+			return saveOnce()
+		}
+		defer saveOnce()
 	}
 
 	return ValidateConfig(c, false)
 }
 
 func (c *AgentConfig) Save() error {
+	if err := c.validateTraffic(); err != nil {
+		return err
+	}
 	data, err := yaml.Marshal(c)
 	if err != nil {
 		return err
@@ -122,7 +141,12 @@ func (c *AgentConfig) Save() error {
 	return os.Chmod(c.filePath, 0600)
 }
 
+func (c *AgentConfig) ConfigFile() string { return c.filePath }
+
 func ValidateConfig(c *AgentConfig, isRemoteEdit bool) error {
+	if err := c.validateTraffic(); err != nil {
+		return err
+	}
 	if c.ReportDelay == 0 {
 		c.ReportDelay = 3
 	}
@@ -161,7 +185,58 @@ func ValidateConfig(c *AgentConfig, isRemoteEdit bool) error {
 	return nil
 }
 
-type kubeyaml struct{}
+func (c *AgentConfig) validateTraffic() error {
+	if c.Traffic == nil {
+		return nil
+	}
+	if err := c.Traffic.Validate(); err != nil {
+		return err
+	}
+	if len(c.NICAllowlist) > 0 {
+		return errors.New("traffic.include and nic_allowlist cannot be combined")
+	}
+	if c.filePath == "" {
+		return nil
+	}
+	configPath, err := filepath.Abs(c.filePath)
+	if err != nil {
+		return err
+	}
+	configInfo, _ := os.Stat(configPath)
+	for _, target := range []string{c.Traffic.StateFile, c.Traffic.StateFile + ".lock"} {
+		info, _ := os.Stat(target)
+		if configPath == target || (configInfo != nil && info != nil && os.SameFile(configInfo, info)) {
+			return errors.New("traffic state_file and its lock must differ from the agent config")
+		}
+	}
+	return nil
+}
+
+// ReadTrafficConfig reads the local policy without generating a UUID, applying
+// environment overrides, or saving the configuration.
+func ReadTrafficConfig(path string) (*traffic.Config, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	parser := new(kubeyaml)
+	values, err := parser.Unmarshal(data)
+	if err != nil || parser.traffic == nil {
+		return nil, err
+	}
+	cfg := AgentConfig{Traffic: parser.traffic, filePath: path}
+	if allowlist, ok := values["nic_allowlist"].(map[string]interface{}); ok && len(allowlist) > 0 {
+		return nil, errors.New("traffic.include and nic_allowlist cannot be combined")
+	}
+	if err := cfg.validateTraffic(); err != nil {
+		return nil, err
+	}
+	return cfg.Traffic, nil
+}
+
+type kubeyaml struct {
+	traffic *traffic.Config
+}
 
 // Unmarshal parses the given YAML bytes.
 func (k *kubeyaml) Unmarshal(b []byte) (map[string]interface{}, error) {
@@ -170,6 +245,18 @@ func (k *kubeyaml) Unmarshal(b []byte) (map[string]interface{}, error) {
 		return nil, err
 	}
 
+	if _, ok := out["traffic"]; ok {
+		var fields map[string]json.RawMessage
+		if err := yaml.UnmarshalStrict(b, &fields); err != nil {
+			return nil, errors.New("invalid agent YAML with traffic configuration")
+		}
+		decoder := json.NewDecoder(bytes.NewReader(fields["traffic"]))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&k.traffic); err != nil {
+			return nil, fmt.Errorf("invalid traffic configuration: %w", err)
+		}
+		delete(out, "traffic")
+	}
 	return out, nil
 }
 

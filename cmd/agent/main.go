@@ -1,3 +1,4 @@
+// Modified by Trifenn: local traffic startup, diagnostics, reload and configuration guards.
 package main
 
 import (
@@ -159,13 +160,25 @@ func preRun(configPath string) error {
 	if err := agentConfig.Read(configPath); err != nil {
 		return fmt.Errorf("init config failed: %v", err)
 	}
+	if agentConfig.Traffic != nil && runtime.GOOS != "linux" {
+		return errors.New("custom traffic collection requires Linux")
+	}
+	if err := monitor.InitTraffic(agentConfig.Traffic); err != nil {
+		return fmt.Errorf("init traffic: %w", err)
+	}
 	publishRuntimeConfig(agentConfig)
 
 	return nil
 }
 
 func main() {
-	app := &cli.App{
+	if err := newAgentApp().Run(os.Args); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func newAgentApp() *cli.App {
+	return &cli.App{
 		Usage:   "哪吒监控 Agent",
 		Version: version,
 		Flags: []cli.Flag{
@@ -185,6 +198,8 @@ func main() {
 			return nil
 		},
 		Commands: []*cli.Command{
+			trafficCommand("traffic-check", "Inspect Linux interface selection and overlaps", checkTraffic),
+			trafficCommand("traffic-status", "Read the local traffic checkpoint", statusTraffic),
 			{
 				Name:  "edit",
 				Usage: "编辑配置文件",
@@ -223,16 +238,17 @@ func main() {
 			},
 		},
 	}
-
-	if err := app.Run(os.Args); err != nil {
-		log.Fatal(err)
-	}
 }
 
 func run() {
-	startupConfig := startupConfigViewFrom(loadRuntimeConfig())
+	config := loadRuntimeConfig()
+	startupConfig := startupConfigViewFrom(config)
+	if config.Traffic != nil {
+		stopReload := startTrafficReload(config.ConfigFile())
+		defer stopReload()
+	}
 	// 定时检查更新
-	if _, err := semver.Parse(version); err == nil && !startupConfig.disableAutoUpdate {
+	if _, err := semver.Parse(version); err == nil && !startupConfig.disableAutoUpdate && config.Traffic == nil {
 		if doSelfUpdate(updateConfigTupleFrom(loadRuntimeConfig()), true) {
 			os.Exit(1)
 		}
@@ -538,6 +554,10 @@ func reportGeoIP(parent context.Context, config *model.AgentConfig, options geoI
 
 // doSelfUpdate 执行更新检查 如果更新成功则会结束进程
 func doSelfUpdate(config updateConfigTuple, useLocalVersion bool) (exit bool) {
+	if config.trafficEnabled {
+		printf("Official self-update disabled while local traffic accounting is enabled")
+		return false
+	}
 	v := semver.MustParse("0.1.0")
 	if useLocalVersion {
 		vr, err := semver.Parse(version)
@@ -844,7 +864,9 @@ func handleReportConfigTaskWithConfig(config *model.AgentConfig, result *pb.Task
 
 	println("Executing Report Config Task")
 
-	c, err := json.Marshal(config)
+	dashboardConfig := *config
+	dashboardConfig.Traffic = nil
+	c, err := json.Marshal(dashboardConfig)
 	if err != nil {
 		result.Data = err.Error()
 		return
@@ -997,7 +1019,12 @@ func parseApplyConfigLocked(config *model.AgentConfig, task *pb.Task, result *pb
 		return model.AgentConfig{}, false
 	}
 	tmpConfig := config.Clone()
-	if err := json.Unmarshal([]byte(task.GetData()), &tmpConfig); err != nil {
+	// Shadow the local policy so any remote representation of traffic is ignored.
+	remote := struct {
+		*model.AgentConfig
+		Traffic json.RawMessage `json:"traffic"`
+	}{AgentConfig: &tmpConfig}
+	if err := json.Unmarshal([]byte(task.GetData()), &remote); err != nil {
 		printf("Parsing Config failed: %v", err)
 		result.Data = err.Error()
 		return model.AgentConfig{}, false

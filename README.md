@@ -2,6 +2,8 @@
   
 Agent of Nezha Monitoring
 
+This fork offers [opt-in Linux traffic accounting](docs/traffic.md) with per-interface selection, weighted transfer totals, and a persistent checkpoint. See [NOTICE](NOTICE) for source attribution and license scope.
+
 ## Contributors
 
 <!--GAMFC_DELIMITER--><a href="https://github.com/naiba" title="naiba"><img src="https://avatars.githubusercontent.com/u/29243953?v=4" width="50;" alt="naiba"/></a>

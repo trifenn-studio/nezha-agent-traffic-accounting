@@ -1,0 +1,24 @@
+Nezha Agent traffic accounting
+
+The base of this fork is nezhahq/agent main at 7a8fd27b1ede.
+Copyright (C) 2020 naiba. See LICENSE for the current upstream license.
+
+The traffic accounting changes were originally developed against
+nezhahq/agent v2.4.0 (2c33791c40c81154da4eb972f1257faa8c4180e8).
+That upstream source was distributed under the Apache License, Version 2.0,
+with Copyright 2020 naiba. See LICENSE.Apache-2.0 for the license and notice
+from that version.
+
+Copyright 2026 Trifenn for the traffic implementation and its adaptations.
+The Apache-2.0 traffic files are identified by their SPDX headers in
+pkg/traffic, pkg/monitor/traffic*.go, cmd/agent/traffic*.go and
+model/traffic_test.go. Traffic additions adapted from that implementation
+in cmd/agent/main.go, model/config.go and pkg/monitor/network.go retain
+Apache-2.0 terms alongside the current upstream code in those files.
+
+The port integrates the traffic policy with the current runtime snapshots,
+reuses the current hostfs persistence operations, and keeps network rates
+in raw bytes per second in both report modes. The configuration editor and
+update config snapshot were adapted on the current upstream baseline for
+local policy protection. docs/traffic.md describes the public configuration
+and operation of this port.

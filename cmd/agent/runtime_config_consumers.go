@@ -1,3 +1,4 @@
+// Modified by Trifenn: guard self-update using the local traffic configuration snapshot.
 package main
 
 import (
@@ -37,6 +38,7 @@ type taskFeatureGates struct {
 type updateConfigTuple struct {
 	useAtomGitToUpgrade bool
 	useGiteeToUpgrade   bool
+	trafficEnabled      bool
 }
 
 type startupConfigView struct {
@@ -85,6 +87,7 @@ func updateConfigTupleFrom(config *model.AgentConfig) updateConfigTuple {
 	return updateConfigTuple{
 		useAtomGitToUpgrade: config.UseAtomGitToUpgrade,
 		useGiteeToUpgrade:   config.UseGiteeToUpgrade,
+		trafficEnabled:      config.Traffic != nil,
 	}
 }
 

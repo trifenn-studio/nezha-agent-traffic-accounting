@@ -1,3 +1,4 @@
+// Modified by Trifenn: route configured traffic through the local ledger.
 package monitor
 
 import (
@@ -12,6 +13,10 @@ import (
 var networkNow = time.Now
 
 func TrackNetworkSpeed(config *model.AgentConfig) {
+	if config != nil && config.Traffic != nil {
+		trackCustomTraffic(config.Traffic)
+		return
+	}
 	var allowlist map[string]bool
 	if config != nil {
 		allowlist = config.NICAllowlist

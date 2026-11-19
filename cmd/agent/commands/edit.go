@@ -1,3 +1,4 @@
+// Modified by Trifenn: preserve local traffic configuration in interactive edits.
 package commands
 
 import (
@@ -16,15 +17,9 @@ import (
 
 // 修改Agent要监控的网卡与硬盘分区
 func EditAgentConfig(configPath string, agentConfig *model.AgentConfig) {
-	agentConfig.Read(configPath)
-
-	nc, err := psnet.IOCounters(true)
-	if err != nil {
-		panic(err)
-	}
-	var nicAllowlistOptions []string
-	for _, v := range nc {
-		nicAllowlistOptions = append(nicAllowlistOptions, v.Name)
+	if err := agentConfig.Read(configPath); err != nil {
+		fmt.Println("读取配置失败", err)
+		return
 	}
 
 	var diskAllowlistOptions []string
@@ -42,13 +37,6 @@ func EditAgentConfig(configPath string, agentConfig *model.AgentConfig) {
 	}
 
 	var qs = []*survey.Question{
-		{
-			Name: "nic",
-			Prompt: &survey.MultiSelect{
-				Message: "选择要监控的网卡",
-				Options: nicAllowlistOptions,
-			},
-		},
 		{
 			Name: "disk",
 			Prompt: &survey.MultiSelect{
@@ -95,6 +83,24 @@ func EditAgentConfig(configPath string, agentConfig *model.AgentConfig) {
 			},
 		},
 	}
+	if agentConfig.Traffic == nil {
+		counters, err := psnet.IOCounters(true)
+		if err != nil {
+			panic(err)
+		}
+		names := make([]string, 0, len(counters))
+		for _, counter := range counters {
+			names = append(names, counter.Name)
+		}
+		question := &survey.Question{
+			Name: "nic",
+			Prompt: &survey.MultiSelect{
+				Message: "选择要监控的网卡",
+				Options: names,
+			},
+		}
+		qs = append([]*survey.Question{question}, qs...)
+	}
 
 	answers := struct {
 		Nic         []string `mapstructure:"nic_allowlist" json:"nic_allowlist"`
@@ -117,9 +123,11 @@ func EditAgentConfig(configPath string, agentConfig *model.AgentConfig) {
 		agentConfig.HardDrivePartitionAllowlist = append(agentConfig.HardDrivePartitionAllowlist, strings.Split(v, "\t")[0])
 	}
 
-	agentConfig.NICAllowlist = make(map[string]bool)
-	for _, v := range answers.Nic {
-		agentConfig.NICAllowlist[v] = true
+	if agentConfig.Traffic == nil {
+		agentConfig.NICAllowlist = make(map[string]bool)
+		for _, v := range answers.Nic {
+			agentConfig.NICAllowlist[v] = true
+		}
 	}
 
 	dnsServers := strings.TrimSpace(answers.DNS)
