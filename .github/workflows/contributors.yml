@@ -6,6 +6,7 @@ on:
 
 jobs:
   contributors:
+    if: github.repository == 'nezhahq/agent'
     runs-on: ubuntu-latest
     steps:
       - name: Generate Contributors Images

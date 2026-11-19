@@ -18,6 +18,7 @@ concurrency:
 
 jobs:
   tests:
+    if: github.repository == 'nezhahq/agent'
     name: Ordinary tests (${{ matrix.os }})
     strategy:
       fail-fast: false
@@ -39,6 +40,7 @@ jobs:
         run: go test -mod=readonly -count=1 ./...
 
   linux-race-quality:
+    if: github.repository == 'nezhahq/agent'
     name: Linux race and quality
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -65,6 +67,7 @@ jobs:
         run: go build ./cmd/agent
 
   agentcompat-stress:
+    if: github.repository == 'nezhahq/agent'
     name: Linux agent compatibility stress
     runs-on: ubuntu-24.04
     timeout-minutes: 75
@@ -111,7 +114,8 @@ jobs:
 
   agent-quality-required:
     name: agent-quality-required
-    if: ${{ always() }}
+    if: >-
+      ${{ github.repository == 'nezhahq/agent' && (always()) }}
     needs:
       - tests
       - linux-race-quality

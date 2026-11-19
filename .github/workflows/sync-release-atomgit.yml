@@ -5,6 +5,7 @@ on:
 
 jobs:
   sync-release-to-atomgit:
+    if: github.repository == 'nezhahq/agent'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
