@@ -44,7 +44,7 @@ jobs:
         run: |
           mkdir -p dist/package
           go mod verify
-          version="0.0.0-trifenn+$GITHUB_SHA"
+          version="2.4.0-trifenn+$GITHUB_SHA"
           go build -mod=readonly -trimpath -buildvcs=true \
             -ldflags "-s -w -X github.com/nezhahq/agent/pkg/monitor.Version=$version -X main.arch=$ARCH" -o "dist/package/$BINARY" ./cmd/agent
       - name: Verify and package
